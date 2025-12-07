@@ -66,38 +66,51 @@ class FeatureEngineeringService:
         from app.extensions import db
         from sqlalchemy import text
 
-        # Consulta SQL optimizada que hace todo el trabajo en la base de datos
+        # Consulta SQL optimizada usando LEFT JOINs en lugar de subqueries correlacionadas
+        # Esto es mucho más eficiente para bases de datos grandes y evita timeouts
         sql = text("""
+            WITH CuentasStats AS (
+                SELECT 
+                    "COD_CLIENTE",
+                    COALESCE(SUM("SALDO_DISPONIBLE"), 0) as total_saldo_cuentas,
+                    COUNT(*) as num_cuentas_activas
+                FROM "CORE_CUENTAS"
+                WHERE "ESTADO" = 'A'
+                GROUP BY "COD_CLIENTE"
+            ),
+            TarjetasStats AS (
+                SELECT 
+                    "COD_CLIENTE",
+                    COUNT(*) as num_tarjetas_credito
+                FROM "CORE_TARJETAS"
+                WHERE "TIPO_TARJETA" = 'CREDITO' AND "ESTADO" = 'A'
+                GROUP BY "COD_CLIENTE"
+            ),
+            MovimientosStats AS (
+                SELECT 
+                    cu."COD_CLIENTE",
+                    COALESCE(SUM(m."MONTO"), 0) as total_monto_movimientos,
+                    COALESCE(AVG(m."MONTO"), 0) as promedio_monto_movimientos,
+                    COUNT(*) as num_transacciones
+                FROM "CORE_MOVIMIENTOS" m
+                JOIN "CORE_CUENTAS" cu ON m."NUM_CUENTA" = cu."NUM_CUENTA"
+                GROUP BY cu."COD_CLIENTE"
+            )
             SELECT 
                 c."COD_CLIENTE",
                 c."FECHA_NAC",
                 c."INGRESOS_MES",
                 c."SCORE_CREDITICIO",
-                -- Subquery para cuentas (Suma de saldos y conteo)
-                (SELECT COALESCE(SUM("SALDO_DISPONIBLE"), 0) 
-                 FROM "CORE_CUENTAS" cu 
-                 WHERE cu."COD_CLIENTE" = c."COD_CLIENTE" AND cu."ESTADO" = 'A') as total_saldo_cuentas,
-                (SELECT COUNT(*) 
-                 FROM "CORE_CUENTAS" cu 
-                 WHERE cu."COD_CLIENTE" = c."COD_CLIENTE" AND cu."ESTADO" = 'A') as num_cuentas_activas,
-                -- Subquery para tarjetas de crédito
-                (SELECT COUNT(*) 
-                 FROM "CORE_TARJETAS" t 
-                 WHERE t."COD_CLIENTE" = c."COD_CLIENTE" AND t."TIPO_TARJETA" = 'CREDITO' AND t."ESTADO" = 'A') as num_tarjetas_credito,
-                -- Subquery para movimientos (Suma, Promedio, Conteo)
-                (SELECT COALESCE(SUM(m."MONTO"), 0) 
-                 FROM "CORE_MOVIMIENTOS" m 
-                 JOIN "CORE_CUENTAS" cu ON m."NUM_CUENTA" = cu."NUM_CUENTA" 
-                 WHERE cu."COD_CLIENTE" = c."COD_CLIENTE") as total_monto_movimientos,
-                (SELECT COALESCE(AVG(m."MONTO"), 0) 
-                 FROM "CORE_MOVIMIENTOS" m 
-                 JOIN "CORE_CUENTAS" cu ON m."NUM_CUENTA" = cu."NUM_CUENTA" 
-                 WHERE cu."COD_CLIENTE" = c."COD_CLIENTE") as promedio_monto_movimientos,
-                (SELECT COUNT(*) 
-                 FROM "CORE_MOVIMIENTOS" m 
-                 JOIN "CORE_CUENTAS" cu ON m."NUM_CUENTA" = cu."NUM_CUENTA" 
-                 WHERE cu."COD_CLIENTE" = c."COD_CLIENTE") as num_transacciones
+                COALESCE(cs.total_saldo_cuentas, 0) as total_saldo_cuentas,
+                COALESCE(cs.num_cuentas_activas, 0) as num_cuentas_activas,
+                COALESCE(ts.num_tarjetas_credito, 0) as num_tarjetas_credito,
+                COALESCE(ms.total_monto_movimientos, 0) as total_monto_movimientos,
+                COALESCE(ms.promedio_monto_movimientos, 0) as promedio_monto_movimientos,
+                COALESCE(ms.num_transacciones, 0) as num_transacciones
             FROM "CORE_CLIENTES" c
+            LEFT JOIN CuentasStats cs ON c."COD_CLIENTE" = cs."COD_CLIENTE"
+            LEFT JOIN TarjetasStats ts ON c."COD_CLIENTE" = ts."COD_CLIENTE"
+            LEFT JOIN MovimientosStats ms ON c."COD_CLIENTE" = ms."COD_CLIENTE"
             LIMIT :limit
         """)
 
