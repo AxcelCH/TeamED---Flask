@@ -60,20 +60,70 @@ class FeatureEngineeringService:
     @staticmethod
     def get_training_dataset(limit=1000):
         """
-        Obtiene el dataset completo para entrenamiento.
-        Itera sobre los clientes y genera sus features.
+        Obtiene el dataset completo para entrenamiento usando una consulta SQL optimizada.
+        Evita el problema N+1 y reduce la carga en memoria.
         """
-        # Obtenemos una lista de clientes (limitada para no saturar en pruebas)
-        clientes = Cliente.query.limit(limit).all()
-        dataset = []
+        from app.extensions import db
+        from sqlalchemy import text
 
-        for cliente in clientes:
-            # Reutilizamos la lógica existente pasando el DNI
-            # Nota: Esto no es lo más performante para millones de datos (mejor sería SQL puro),
-            # pero para un prototipo funciona perfecto y mantiene la lógica en un solo lugar.
-            features = FeatureEngineeringService.get_client_features(cliente.dni_ruc)
-            if features:
-                dataset.append(features)
+        # Consulta SQL optimizada que hace todo el trabajo en la base de datos
+        sql = text("""
+            SELECT 
+                c."COD_CLIENTE",
+                c."FECHA_NAC",
+                c."INGRESOS_MES",
+                c."SCORE_CREDITICIO",
+                -- Subquery para cuentas (Suma de saldos y conteo)
+                (SELECT COALESCE(SUM("SALDO_DISPONIBLE"), 0) 
+                 FROM "CORE_CUENTAS" cu 
+                 WHERE cu."COD_CLIENTE" = c."COD_CLIENTE" AND cu."ESTADO" = 'A') as total_saldo_cuentas,
+                (SELECT COUNT(*) 
+                 FROM "CORE_CUENTAS" cu 
+                 WHERE cu."COD_CLIENTE" = c."COD_CLIENTE" AND cu."ESTADO" = 'A') as num_cuentas_activas,
+                -- Subquery para tarjetas de crédito
+                (SELECT COUNT(*) 
+                 FROM "CORE_TARJETAS" t 
+                 WHERE t."COD_CLIENTE" = c."COD_CLIENTE" AND t."TIPO_TARJETA" = 'CREDITO' AND t."ESTADO" = 'A') as num_tarjetas_credito,
+                -- Subquery para movimientos (Suma, Promedio, Conteo)
+                (SELECT COALESCE(SUM(m."MONTO"), 0) 
+                 FROM "CORE_MOVIMIENTOS" m 
+                 JOIN "CORE_CUENTAS" cu ON m."NUM_CUENTA" = cu."NUM_CUENTA" 
+                 WHERE cu."COD_CLIENTE" = c."COD_CLIENTE") as total_monto_movimientos,
+                (SELECT COALESCE(AVG(m."MONTO"), 0) 
+                 FROM "CORE_MOVIMIENTOS" m 
+                 JOIN "CORE_CUENTAS" cu ON m."NUM_CUENTA" = cu."NUM_CUENTA" 
+                 WHERE cu."COD_CLIENTE" = c."COD_CLIENTE") as promedio_monto_movimientos,
+                (SELECT COUNT(*) 
+                 FROM "CORE_MOVIMIENTOS" m 
+                 JOIN "CORE_CUENTAS" cu ON m."NUM_CUENTA" = cu."NUM_CUENTA" 
+                 WHERE cu."COD_CLIENTE" = c."COD_CLIENTE") as num_transacciones
+            FROM "CORE_CLIENTES" c
+            LIMIT :limit
+        """)
+
+        result = db.session.execute(sql, {'limit': limit})
+        
+        dataset = []
+        today = datetime.today()
+
+        for row in result:
+            # Calcular edad en Python (es rápido y evita SQL complejo con fechas)
+            edad = 0
+            if row.FECHA_NAC:
+                edad = today.year - row.FECHA_NAC.year - ((today.month, today.day) < (row.FECHA_NAC.month, row.FECHA_NAC.day))
+
+            dataset.append({
+                "cod_cliente": row.COD_CLIENTE,
+                "edad": edad,
+                "ingresos_mes": float(row.INGRESOS_MES or 0),
+                "score_crediticio": row.SCORE_CREDITICIO,
+                "total_saldo_cuentas": float(row.total_saldo_cuentas or 0),
+                "num_cuentas_activas": row.num_cuentas_activas,
+                "num_tarjetas_credito": row.num_tarjetas_credito,
+                "total_monto_movimientos": float(row.total_monto_movimientos or 0),
+                "promedio_monto_movimientos": float(row.promedio_monto_movimientos or 0),
+                "num_transacciones": row.num_transacciones
+            })
         
         return dataset
 
