@@ -7,26 +7,70 @@ from app.extensions import db
 # url_prefix='/api/v1' significa que todas las rutas aquí empezarán con eso.
 data_bp = Blueprint('data_extraction', __name__, url_prefix='/api/v1')
 
-@data_bp.route('/client-features/<cod_cliente>', methods=['GET'])
-def get_client_features(cod_cliente):
+@data_bp.route('/client-features/<dni>', methods=['GET'])
+def get_client_features(dni):
     """
     Endpoint para obtener el vector de características de un cliente.
-    Uso: GET /api/v1/client-features/C00001
+    ---
+    tags:
+      - Feature Engineering
+    parameters:
+      - name: dni
+        in: path
+        type: string
+        required: true
+        description: DNI o RUC del cliente
+    responses:
+      200:
+        description: Vector de características calculado exitosamente
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success
+            data:
+              type: object
+              properties:
+                cod_cliente:
+                  type: string
+                edad:
+                  type: integer
+                ingresos_mes:
+                  type: number
+                score_crediticio:
+                  type: integer
+                total_saldo_cuentas:
+                  type: number
+                num_cuentas_activas:
+                  type: integer
+                num_tarjetas_credito:
+                  type: integer
+                total_monto_movimientos:
+                  type: number
+                promedio_monto_movimientos:
+                  type: number
+                num_transacciones:
+                  type: integer
+      404:
+        description: Cliente no encontrado
+      500:
+        description: Error interno del servidor
     """
     try:
         # Llamamos al servicio de lógica de negocio
-        features = FeatureEngineeringService.get_client_features(cod_cliente)
+        features = FeatureEngineeringService.get_client_features(dni)
         
         if not features:
             # Logueamos el intento fallido (opcional)
-            log = AppLog(level='WARNING', message=f'Cliente no encontrado: {cod_cliente}', module='data_extraction')
+            log = AppLog(level='WARNING', message=f'Cliente no encontrado por DNI: {dni}', module='data_extraction')
             db.session.add(log)
             db.session.commit()
             
             return jsonify({'error': 'Cliente no encontrado'}), 404
 
         # Logueamos el acceso exitoso
-        log = AppLog(level='INFO', message=f'Features extraidas para: {cod_cliente}', module='data_extraction')
+        log = AppLog(level='INFO', message=f'Features extraidas para DNI: {dni}', module='data_extraction')
         db.session.add(log)
         db.session.commit()
 

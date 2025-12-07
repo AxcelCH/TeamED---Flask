@@ -9,16 +9,19 @@ class FeatureEngineeringService:
     """
 
     @staticmethod
-    def get_client_features(cod_cliente):
+    def get_client_features(dni):
         """
-        Obtiene y calcula las variables para un cliente específico.
+        Obtiene y calcula las variables para un cliente específico buscando por DNI.
         Retorna un diccionario con los datos agregados.
         """
         
-        # 1. Obtener datos demográficos del cliente
-        cliente = Cliente.query.filter_by(cod_cliente=cod_cliente).first()
+        # 1. Obtener datos demográficos del cliente usando DNI
+        cliente = Cliente.query.filter_by(dni_ruc=dni).first()
         if not cliente:
             return None
+        
+        # Obtenemos el código interno para buscar en las otras tablas
+        cod_cliente = cliente.cod_cliente
 
         # Calcular edad
         edad = 0

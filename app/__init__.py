@@ -2,6 +2,7 @@ from flask import Flask
 from app.config import Config
 from app.extensions import db
 from flask_migrate import Migrate
+from flasgger import Swagger
 
 # Inicializamos Migrate globalmente
 migrate = Migrate()
@@ -17,6 +18,9 @@ def create_app(config_class=Config):
     # Inicializar extensiones con la app
     db.init_app(app)
     migrate.init_app(app, db)
+    
+    # Inicializar Swagger para documentación automática
+    swagger = Swagger(app)
 
     # Registrar Blueprints (Rutas)
     from app.routes.data_extraction import data_bp
