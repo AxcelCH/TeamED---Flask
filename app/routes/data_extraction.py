@@ -83,3 +83,32 @@ def get_client_features(dni):
         # Captura de errores generales
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
+@data_bp.route('/training-data', methods=['GET'])
+def get_training_data():
+    """
+    Obtiene un dataset completo (lista de clientes) para entrenar modelos.
+    ---
+    tags:
+      - Feature Engineering
+    parameters:
+      - name: limit
+        in: query
+        type: integer
+        default: 1000
+        description: Cantidad máxima de registros a retornar
+    responses:
+      200:
+        description: Dataset JSON listo para Pandas/Colab
+    """
+    try:
+        limit = request.args.get('limit', default=1000, type=int)
+        dataset = FeatureEngineeringService.get_training_dataset(limit=limit)
+        
+        return jsonify({
+            'status': 'success',
+            'count': len(dataset),
+            'data': dataset
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

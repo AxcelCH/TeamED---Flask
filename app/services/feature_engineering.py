@@ -57,6 +57,26 @@ class FeatureEngineeringService:
 
         return features
 
+    @staticmethod
+    def get_training_dataset(limit=1000):
+        """
+        Obtiene el dataset completo para entrenamiento.
+        Itera sobre los clientes y genera sus features.
+        """
+        # Obtenemos una lista de clientes (limitada para no saturar en pruebas)
+        clientes = Cliente.query.limit(limit).all()
+        dataset = []
+
+        for cliente in clientes:
+            # Reutilizamos la lógica existente pasando el DNI
+            # Nota: Esto no es lo más performante para millones de datos (mejor sería SQL puro),
+            # pero para un prototipo funciona perfecto y mantiene la lógica en un solo lugar.
+            features = FeatureEngineeringService.get_client_features(cliente.dni_ruc)
+            if features:
+                dataset.append(features)
+        
+        return dataset
+
 def db_sum_accounts(cod_cliente):
     """Helper para sumar saldos usando SQL directo vía SQLAlchemy"""
     from app.extensions import db
