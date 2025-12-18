@@ -23,5 +23,16 @@ class Config:
     # Desactivar el rastreo de modificaciones de objetos (ahorra memoria)
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # Configuración de JWT
+    JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or 'super-secret-jwt-key'
+    JWT_ACCESS_TOKEN_EXPIRES = 3600 * 24 # 1 día de validez por defecto
+
+    # Configuración de Mainframe (CICS / zOS Connect)
+    MAINFRAME_CICS_URL = os.environ.get('MAINFRAME_CICS_URL')
+    
+    # Flag para usar simulación local en lugar de conectar al Mainframe real
+    # Si es True, usa la BD local. Si es False, intenta conectar a MAINFRAME_CICS_URL.
+    USE_MOCK_MAINFRAME = os.environ.get('USE_MOCK_MAINFRAME', 'True').lower() == 'true'
+
     # Aquí podrías agregar configuraciones para DB2 en el futuro
     # DB2_DATABASE_URI = os.environ.get('DB2_DATABASE_URI')
