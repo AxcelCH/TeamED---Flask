@@ -1,7 +1,8 @@
 from app.models.core_banking import Cliente, Cuenta, Tarjeta, Movimiento, CategoriaCore, MccCore
 from app.extensions import db
 from flask import current_app
-from sqlalchemy import func
+from sqlalchemy import func, case, extract
+from datetime import datetime
 import requests
 
 class CoreBankingService:
@@ -52,7 +53,7 @@ class CoreBankingService:
         # SELECT M.*, C.NOMBRE_CATEGORIA 
         # FROM CORE_MOVIMIENTOS M
         # LEFT JOIN CORE_MCC MCC ON M.COD_COMERCIO = MCC.COD_MCC
-        # LEFT JOIN CORE_CATEGORIAS C ON MCC.ID_CATEGORIA = C.ID_CATEGORIA
+        # LEFT JOIN CORE_CATEGORIA C ON MCC.ID_CATEGORIA = C.ID_CATEGORIA
         # WHERE M.NUM_CUENTA = ...
         
         movimientos_query = db.session.query(
@@ -181,26 +182,261 @@ class CoreBankingService:
         cuentas_orm = Cuenta.query.filter_by(cod_cliente=cod_cliente).all()
         
         lista_cuentas = []
+        lista_tarjetas = []
+        
         for c in cuentas_orm:
             lista_cuentas.append({
                 "CTA-NUMERO": c.num_cuenta,
                 "CTA-MONEDA": c.moneda,
                 "CTA-SALDO": float(c.saldo_disponible)
             })
-
-        # 3. Obtener Tarjetas (CURSOR TARJETAS)
-        # En la nueva estructura, consultamos directamente CORE_TARJETAS por COD_CLIENTE
-        tarjetas_orm = Tarjeta.query.filter_by(cod_cliente=cod_cliente).all()
-        
-        lista_tarjetas = []
-        for t in tarjetas_orm:
-            lista_tarjetas.append({
-                "TRJ-NUMERO": t.num_tarjeta,
-                "TRJ-CTA-LINK": t.num_cuenta if t.num_cuenta else ""
-            })
+            
+            # 3. Obtener Tarjetas (Vinculadas a la Cuenta)
+            # En este esquema estricto, solo vemos tarjetas asociadas a cuentas (Débito)
+            if c.num_tarjeta:
+                lista_tarjetas.append({
+                    "TRJ-NUMERO": c.num_tarjeta,
+                    "TRJ-CTA-LINK": c.num_cuenta
+                })
 
         return {
             "COD-RETORNO": "00",
             "TABLA-CUENTAS": lista_cuentas,
             "TABLA-TARJETAS": lista_tarjetas
+        }
+
+    @staticmethod
+    def obtener_movimientos_paginados(num_cuenta: str, categoria: str, last_id: str = None, limit: int = 15):
+        """
+        Simula la transacción TRX003 (Consulta Detallada Paginada).
+        Retorna movimientos filtrados por categoría con paginación por cursor (last_id).
+        """
+        use_mock = current_app.config.get('USE_MOCK_MAINFRAME', True)
+        
+        # --- MODO SIMULACIÓN (Mock con BD Local) ---
+        current_app.logger.info(f"TRX003: Cuenta={num_cuenta}, Cat={categoria}, LastID={last_id}")
+        
+        # Construir Query Base
+        # JOIN Movimiento -> MccCore -> CategoriaCore
+        query = db.session.query(Movimiento).join(
+            MccCore, Movimiento.cod_comercio == MccCore.cod_mcc
+        ).join(
+            CategoriaCore, MccCore.id_categoria == CategoriaCore.id_categoria
+        ).filter(
+            Movimiento.num_cuenta == num_cuenta,
+            CategoriaCore.nombre_categoria == categoria
+        )
+        
+        # Aplicar Paginación (Cursor)
+        # Asumimos orden descendente por ID_TRX (que incluye timestamp)
+        if last_id:
+            query = query.filter(Movimiento.id_trx < last_id)
+            
+        # Ordenar y Limitar
+        # Pedimos limit + 1 para saber si hay más páginas
+        movimientos = query.order_by(Movimiento.id_trx.desc()).limit(limit + 1).all()
+        
+        has_more = len(movimientos) > limit
+        if has_more:
+            movimientos = movimientos[:limit] # Recortar al límite solicitado
+            
+        # Formatear Salida (Simulando estructura COBOL/JSON final)
+        lista_movs = []
+        for mov in movimientos:
+            lista_movs.append({
+                "id_transaccion": mov.id_trx,
+                "fecha": mov.fecha_proceso.isoformat(),
+                "glosa": mov.glosa_trx,
+                "monto": float(mov.monto) * (-1 if mov.tipo_mov == 'D' else 1), # Signo negativo para gastos
+                "moneda": mov.moneda
+            })
+            
+        return {
+            "meta": {
+                "count": len(lista_movs),
+                "has_more": has_more
+            },
+            "data": lista_movs
+        }
+
+    @staticmethod
+    def obtener_metricas_financieras(cod_cliente: int):
+        """
+        Simula la transacción TRX004 (Análisis de Comportamiento Financiero).
+        Retorna la categoría TOP y la distribución de gastos por tamaño.
+        """
+        use_mock = current_app.config.get('USE_MOCK_MAINFRAME', True)
+        current_app.logger.info(f"TRX004: Análisis Financiero para Cliente={cod_cliente}")
+
+        # 1. Determinar el mes de análisis
+        # Intentamos usar el mes actual. Si no hay datos, buscamos el último mes con actividad.
+        now = datetime.now()
+        target_month = now.month
+        target_year = now.year
+
+        # Verificar si hay movimientos en el mes actual
+        has_data = db.session.query(Movimiento).join(
+            Cuenta, Movimiento.num_cuenta == Cuenta.num_cuenta
+        ).filter(
+            Cuenta.cod_cliente == cod_cliente,
+            extract('month', Movimiento.fecha_proceso) == target_month,
+            extract('year', Movimiento.fecha_proceso) == target_year
+        ).first()
+
+        if not has_data:
+            # Fallback: Buscar la fecha máxima de movimientos para este cliente
+            last_mov_date = db.session.query(func.max(Movimiento.fecha_proceso)).join(
+                Cuenta, Movimiento.num_cuenta == Cuenta.num_cuenta
+            ).filter(
+                Cuenta.cod_cliente == cod_cliente
+            ).scalar()
+
+            if last_mov_date:
+                target_month = last_mov_date.month
+                target_year = last_mov_date.year
+                current_app.logger.info(f"TRX004: Sin datos en mes actual. Usando último mes disponible: {target_month}/{target_year}")
+            else:
+                current_app.logger.warning("TRX004: Cliente sin movimientos históricos.")
+                return {
+                    "COD-RETORNO": "00",
+                    "METRICAS-GASTO": {
+                        "TOP-CATEGORIA": "Ninguna",
+                        "QTY-PEQUENO": 0,
+                        "QTY-MEDIANO": 0,
+                        "QTY-GRANDE": 0
+                    }
+                }
+
+        # Base Query: Movimientos de Gasto (Debito) del Cliente en el mes OBJETIVO
+        base_query = db.session.query(Movimiento).join(
+            Cuenta, Movimiento.num_cuenta == Cuenta.num_cuenta
+        ).filter(
+            Cuenta.cod_cliente == cod_cliente,
+            Movimiento.tipo_mov == 'D',
+            extract('month', Movimiento.fecha_proceso) == target_month,
+            extract('year', Movimiento.fecha_proceso) == target_year
+        )
+
+        # QUERY 1: Top Categoría
+        top_cat_result = db.session.query(
+            CategoriaCore.id_categoria,
+            CategoriaCore.nombre_categoria,
+            func.sum(Movimiento.monto).label('total_gasto')
+        ).join(
+            MccCore, Movimiento.cod_comercio == MccCore.cod_mcc
+        ).join(
+            CategoriaCore, MccCore.id_categoria == CategoriaCore.id_categoria
+        ).join(
+            Cuenta, Movimiento.num_cuenta == Cuenta.num_cuenta
+        ).filter(
+            Cuenta.cod_cliente == cod_cliente,
+            Movimiento.tipo_mov == 'D',
+            extract('month', Movimiento.fecha_proceso) == target_month,
+            extract('year', Movimiento.fecha_proceso) == target_year
+        ).group_by(
+            CategoriaCore.id_categoria,
+            CategoriaCore.nombre_categoria
+        ).order_by(
+            func.sum(Movimiento.monto).desc()
+        ).first()
+
+        if top_cat_result:
+            top_categoria_id = top_cat_result[0]
+            top_categoria_nombre = top_cat_result[1]
+        else:
+            top_categoria_id = None
+            top_categoria_nombre = "Ninguna"
+
+        # QUERY 2: Clasificación por Tamaño (Pivot con CASE)
+        # Pequeño (< 50), Mediano (50-200), Grande (> 200)
+        metrics_result = base_query.with_entities(
+            func.sum(case((Movimiento.monto < 50, 1), else_=0)).label('qty_pequeno'),
+            func.sum(case((Movimiento.monto.between(50, 200), 1), else_=0)).label('qty_mediano'),
+            func.sum(case((Movimiento.monto > 200, 1), else_=0)).label('qty_grande')
+        ).first()
+
+        qty_pequeno = int(metrics_result.qty_pequeno or 0)
+        qty_mediano = int(metrics_result.qty_mediano or 0)
+        qty_grande = int(metrics_result.qty_grande or 0)
+
+        return {
+            "COD-RETORNO": "00",
+            "METRICAS-GASTO": {
+                "TOP-CATEGORIA-ID": top_categoria_id,
+                "TOP-CATEGORIA": top_categoria_nombre,
+                "QTY-PEQUENO": qty_pequeno,
+                "QTY-MEDIANO": qty_mediano,
+                "QTY-GRANDE": qty_grande
+            }
+        }
+
+    @staticmethod
+    def obtener_perfil_360(cod_cliente: int):
+        """
+        TRX005: Perfil Financiero 360 (Coach Pulgarcito).
+        Agrega Salud Financiera + Comportamiento de Gasto.
+        """
+        # 1. Obtener Datos Básicos (Ingresos, Score)
+        cliente = Cliente.query.filter_by(cod_cliente=cod_cliente).first()
+        if not cliente:
+            return None
+
+        # 2. Obtener Liquidez Total (Suma de Saldos)
+        liquidez = db.session.query(func.sum(Cuenta.saldo_disponible)).filter_by(cod_cliente=cod_cliente, estado='A').scalar() or 0.0
+
+        # 3. Obtener Métricas de Gasto (Reutilizando TRX004)
+        # Nota: TRX004 ya maneja la lógica de "Mes Actual" vs "Último Mes Activo"
+        metrics_data = CoreBankingService.obtener_metricas_financieras(cod_cliente)
+        metrics = metrics_data.get('METRICAS-GASTO', {})
+
+        # 4. Calcular Gasto Total del Mes Analizado (Para consistencia con TRX004)
+        # Necesitamos saber qué mes usó TRX004, pero por simplicidad recalculamos el total
+        # usando la misma lógica de fallback si es necesario, o simplemente sumamos lo que TRX004 analizó.
+        # TRX004 no devuelve el monto total, así que lo calculamos aquí rápido.
+        # Ojo: Para ser precisos, deberíamos refactorizar TRX004 para devolver el mes usado.
+        # Por ahora, asumiremos el mes actual o el último activo igual que TRX004.
+        
+        now = datetime.now()
+        target_month = now.month
+        target_year = now.year
+        
+        # Chequeo rápido de datos (misma lógica TRX004)
+        has_data = db.session.query(Movimiento).join(Cuenta).filter(
+            Cuenta.cod_cliente == cod_cliente,
+            extract('month', Movimiento.fecha_proceso) == target_month,
+            extract('year', Movimiento.fecha_proceso) == target_year
+        ).first()
+        
+        if not has_data:
+             last_mov_date = db.session.query(func.max(Movimiento.fecha_proceso)).join(Cuenta).filter(Cuenta.cod_cliente == cod_cliente).scalar()
+             if last_mov_date:
+                 target_month = last_mov_date.month
+                 target_year = last_mov_date.year
+
+        gasto_mes = db.session.query(func.sum(Movimiento.monto)).join(Cuenta).filter(
+            Cuenta.cod_cliente == cod_cliente,
+            Movimiento.tipo_mov == 'D',
+            extract('month', Movimiento.fecha_proceso) == target_month,
+            extract('year', Movimiento.fecha_proceso) == target_year
+        ).scalar() or 0.0
+
+        return {
+            "financial_health": {
+                "ingresos_mensuales_promedio": float(cliente.ingresos_mes),
+                "score_crediticio": cliente.score_crediticio,
+                "liquidez_total": {
+                    "saldo_cuentas_ahorro": float(liquidez),
+                    "moneda": "PEN" # Asumimos PEN por defecto o base
+                }
+            },
+            "spending_behavior": {
+                "gasto_mes_actual": float(gasto_mes),
+                "top_categoria_gasto": metrics.get('TOP-CATEGORIA', 'Ninguna'),
+                "top_categoria_id": metrics.get('TOP-CATEGORIA-ID'),
+                "patron_consumo": {
+                    "transacciones_pequenas": metrics.get('QTY-PEQUENO', 0),
+                    "transacciones_medianas": metrics.get('QTY-MEDIANO', 0),
+                    "transacciones_grandes": metrics.get('QTY-GRANDE', 0)
+                }
+            }
         }

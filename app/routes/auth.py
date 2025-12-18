@@ -62,8 +62,8 @@ def register():
         return jsonify({"msg": "El DNI no corresponde a un cliente activo del banco"}), 400
 
     # Crear nuevo usuario
-    # Generamos un ID con formato CLI + 12 dígitos
-    user_uuid = f"CLI{random.randint(100000000000, 999999999999)}"
+    # El user_uuid será el código de cliente del mainframe
+    user_uuid = str(cliente_core['cod_cliente'])
     
     new_user = Usuario(
         user_uuid=user_uuid,

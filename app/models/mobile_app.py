@@ -19,8 +19,13 @@ class GamificacionAnimal(db.Model):
     nombre_animal = db.Column('NOMBRE_ANIMAL', db.String(20), comment='Ej: Perezoso, Hormiga, Águila')
     descripcion_perfil = db.Column('DESCRIPCION_PERFIL', db.String(255), comment="Ej: 'Aún te cuesta mover tus ahorros...'")
     url_icono = db.Column('URL_ICONO', db.String(255))
-    rango_gasto_min = db.Column('RANGO_GASTO_MIN', db.Numeric(15, 2), comment='Lógica para asignar este animal')
-    rango_gasto_max = db.Column('RANGO_GASTO_MAX', db.Numeric(15, 2))
+    
+    # Nueva lógica: Asociación directa con Categoría
+    id_categoria = db.Column('ID_CATEGORIA', db.Integer, comment='ID de la categoría asociada (1-9)')
+    
+    # Deprecado: Lógica por rangos
+    # rango_gasto_min = db.Column('RANGO_GASTO_MIN', db.Numeric(15, 2))
+    # rango_gasto_max = db.Column('RANGO_GASTO_MAX', db.Numeric(15, 2))
 
     # Relación inversa
     usuarios = db.relationship('Usuario', backref='gamificacion_perfil', lazy=True)
