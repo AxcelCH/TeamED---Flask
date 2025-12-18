@@ -35,11 +35,9 @@ def create_app(config_class=Config):
     # Registrar Blueprints (Rutas)
     from app.routes.auth import auth_bp
     from app.routes.products import products_bp
-    from app.routes.coach import coach_bp
     
     app.register_blueprint(auth_bp)
     app.register_blueprint(products_bp)
-    app.register_blueprint(coach_bp)
 
     # Crear tablas si no existen (Solo para desarrollo rápido, idealmente usar Flask-Migrate)
     with app.app_context():

@@ -1,8 +1,6 @@
 from flask import Blueprint, jsonify
 from flask_jwt_extended import jwt_required, get_jwt
 from app.services.core_banking_service import CoreBankingService
-from app.models.mobile_app import GamificacionAnimal
-from app.extensions import db
 
 products_bp = Blueprint('products', __name__, url_prefix='/api/v1')
 
@@ -297,51 +295,9 @@ def get_financial_personality():
     ---
     tags:
       - Productos Financieros
-    security:
-      - Bearer: []
     responses:
       200:
         description: Métricas y arquetipo financiero.
-        schema:
-          type: object
-          properties:
-            data:
-              type: object
-              properties:
-                top_categoria:
-                  type: string
-                  description: Nombre de la categoría con mayor gasto.
-                animal_financiero:
-                  type: string
-                  description: Nombre completo del arquetipo (Animal + Nivel).
-                animal_base:
-                  type: string
-                  description: Nombre del animal base.
-                nivel_gasto:
-                  type: string
-                  description: Nivel basado en tamaño de transacciones (Novato, Junior, Master, Legendario).
-                url_icono:
-                  type: string
-                  description: URL relativa del icono del animal.
-                descripcion:
-                  type: string
-                  description: Descripción del perfil financiero.
-                metricas:
-                  type: object
-                  properties:
-                    total_gastado:
-                      type: number
-                    transacciones_totales:
-                      type: integer
-                    distribucion_porcentual:
-                      type: object
-                      properties:
-                        pequeno:
-                          type: number
-                        mediano:
-                          type: number
-                        grande:
-                          type: number
     """
     # 1. Obtener cod_cliente del token
     claims = get_jwt()
@@ -371,43 +327,31 @@ def get_financial_personality():
         pct_pequeno = pct_mediano = pct_grande = 0
 
     # 4. Lógica Middleware: Asignación de Animal (Gamificación)
-    # Ahora basada en la Categoría TOP (ID)
-    top_categoria_id = metricas.get('TOP-CATEGORIA-ID')
+    # Mapa de Arquetipos
+    animal_map = {
+        "Ahorro e Inversión": "Hormiga", # Trabajadora
+        "Transporte y Viajes": "Águila", # Exploradora
+        "Alimentación": "Oso",           # Disfruta la vida
+        "Tecnología": "Búho",            # Sabio/Tech
+        "Entretenimiento": "Delfín",     # Juguetón (Extra)
+        "Ninguna": "Perezoso"            # Default
+    }
     
-    animal_obj = None
-    if top_categoria_id:
-        animal_obj = GamificacionAnimal.query.filter_by(id_categoria=top_categoria_id).first()
+    # Búsqueda aproximada o directa
+    # Si la categoría exacta no está, usamos un default o lógica difusa
+    # Aquí usamos coincidencia parcial simple o default a Perezoso
+    animal = animal_map.get(top_categoria, "Perezoso")
     
-    if not animal_obj:
-        # Fallback: Perezoso (ID Categoria 0 o por nombre)
-        animal_obj = GamificacionAnimal.query.filter_by(nombre_animal='Perezoso').first()
-    
-    animal_nombre = animal_obj.nombre_animal if animal_obj else "Perezoso"
-    animal_icono = animal_obj.url_icono if animal_obj else "assets/animals/sloth.png"
-    animal_desc = animal_obj.descripcion_perfil if animal_obj else "Aún no tienes un perfil definido."
-    
-    # 5. Lógica Middleware: Clasificación por Tamaño de Gasto (Sufijo)
-    # Determina el "Nivel" del animal basado en la mayoría de transacciones
-    suffix = "Novato"
-    if total_tx > 0:
-        # Encontrar el tipo de gasto predominante
-        if qty_gra >= qty_med and qty_gra >= qty_peq:
-            suffix = "Legendario" # Mayoría Grandes (>200)
-        elif qty_med >= qty_peq:
-            suffix = "Master"     # Mayoría Medianos (50-200)
-        else:
-            suffix = "Junior"     # Mayoría Pequeños (<50)
-            
-    animal_completo = f"{animal_nombre} {suffix}"
+    # Si no está en el mapa exacto, intentamos buscar palabras clave
+    if animal == "Perezoso" and top_categoria != "Ninguna":
+        if "Viajes" in top_categoria: animal = "Águila"
+        elif "Tecnología" in top_categoria or "Servicios" in top_categoria: animal = "Búho"
+        elif "Restaurantes" in top_categoria or "Comida" in top_categoria: animal = "Oso"
     
     return jsonify({
         "data": {
             "top_categoria": top_categoria,
-            "animal_financiero": animal_completo,
-            "animal_base": animal_nombre,
-            "nivel_gasto": suffix,
-            "animal_icono": animal_icono,
-            "animal_descripcion": animal_desc,
+            "animal_financiero": animal,
             "distribucion_gastos": {
                 "pequeno": {"qty": qty_peq, "percentage": pct_pequeno},
                 "mediano": {"qty": qty_med, "percentage": pct_mediano},

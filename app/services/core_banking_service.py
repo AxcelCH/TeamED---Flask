@@ -319,7 +319,6 @@ class CoreBankingService:
 
         # QUERY 1: Top Categoría
         top_cat_result = db.session.query(
-            CategoriaCore.id_categoria,
             CategoriaCore.nombre_categoria,
             func.sum(Movimiento.monto).label('total_gasto')
         ).join(
@@ -334,18 +333,12 @@ class CoreBankingService:
             extract('month', Movimiento.fecha_proceso) == target_month,
             extract('year', Movimiento.fecha_proceso) == target_year
         ).group_by(
-            CategoriaCore.id_categoria,
             CategoriaCore.nombre_categoria
         ).order_by(
             func.sum(Movimiento.monto).desc()
         ).first()
 
-        if top_cat_result:
-            top_categoria_id = top_cat_result[0]
-            top_categoria_nombre = top_cat_result[1]
-        else:
-            top_categoria_id = None
-            top_categoria_nombre = "Ninguna"
+        top_categoria = top_cat_result[0] if top_cat_result else "Ninguna"
 
         # QUERY 2: Clasificación por Tamaño (Pivot con CASE)
         # Pequeño (< 50), Mediano (50-200), Grande (> 200)
@@ -362,81 +355,9 @@ class CoreBankingService:
         return {
             "COD-RETORNO": "00",
             "METRICAS-GASTO": {
-                "TOP-CATEGORIA-ID": top_categoria_id,
-                "TOP-CATEGORIA": top_categoria_nombre,
+                "TOP-CATEGORIA": top_categoria,
                 "QTY-PEQUENO": qty_pequeno,
                 "QTY-MEDIANO": qty_mediano,
                 "QTY-GRANDE": qty_grande
-            }
-        }
-
-    @staticmethod
-    def obtener_perfil_360(cod_cliente: int):
-        """
-        TRX005: Perfil Financiero 360 (Coach Pulgarcito).
-        Agrega Salud Financiera + Comportamiento de Gasto.
-        """
-        # 1. Obtener Datos Básicos (Ingresos, Score)
-        cliente = Cliente.query.filter_by(cod_cliente=cod_cliente).first()
-        if not cliente:
-            return None
-
-        # 2. Obtener Liquidez Total (Suma de Saldos)
-        liquidez = db.session.query(func.sum(Cuenta.saldo_disponible)).filter_by(cod_cliente=cod_cliente, estado='A').scalar() or 0.0
-
-        # 3. Obtener Métricas de Gasto (Reutilizando TRX004)
-        # Nota: TRX004 ya maneja la lógica de "Mes Actual" vs "Último Mes Activo"
-        metrics_data = CoreBankingService.obtener_metricas_financieras(cod_cliente)
-        metrics = metrics_data.get('METRICAS-GASTO', {})
-
-        # 4. Calcular Gasto Total del Mes Analizado (Para consistencia con TRX004)
-        # Necesitamos saber qué mes usó TRX004, pero por simplicidad recalculamos el total
-        # usando la misma lógica de fallback si es necesario, o simplemente sumamos lo que TRX004 analizó.
-        # TRX004 no devuelve el monto total, así que lo calculamos aquí rápido.
-        # Ojo: Para ser precisos, deberíamos refactorizar TRX004 para devolver el mes usado.
-        # Por ahora, asumiremos el mes actual o el último activo igual que TRX004.
-        
-        now = datetime.now()
-        target_month = now.month
-        target_year = now.year
-        
-        # Chequeo rápido de datos (misma lógica TRX004)
-        has_data = db.session.query(Movimiento).join(Cuenta).filter(
-            Cuenta.cod_cliente == cod_cliente,
-            extract('month', Movimiento.fecha_proceso) == target_month,
-            extract('year', Movimiento.fecha_proceso) == target_year
-        ).first()
-        
-        if not has_data:
-             last_mov_date = db.session.query(func.max(Movimiento.fecha_proceso)).join(Cuenta).filter(Cuenta.cod_cliente == cod_cliente).scalar()
-             if last_mov_date:
-                 target_month = last_mov_date.month
-                 target_year = last_mov_date.year
-
-        gasto_mes = db.session.query(func.sum(Movimiento.monto)).join(Cuenta).filter(
-            Cuenta.cod_cliente == cod_cliente,
-            Movimiento.tipo_mov == 'D',
-            extract('month', Movimiento.fecha_proceso) == target_month,
-            extract('year', Movimiento.fecha_proceso) == target_year
-        ).scalar() or 0.0
-
-        return {
-            "financial_health": {
-                "ingresos_mensuales_promedio": float(cliente.ingresos_mes),
-                "score_crediticio": cliente.score_crediticio,
-                "liquidez_total": {
-                    "saldo_cuentas_ahorro": float(liquidez),
-                    "moneda": "PEN" # Asumimos PEN por defecto o base
-                }
-            },
-            "spending_behavior": {
-                "gasto_mes_actual": float(gasto_mes),
-                "top_categoria_gasto": metrics.get('TOP-CATEGORIA', 'Ninguna'),
-                "top_categoria_id": metrics.get('TOP-CATEGORIA-ID'),
-                "patron_consumo": {
-                    "transacciones_pequenas": metrics.get('QTY-PEQUENO', 0),
-                    "transacciones_medianas": metrics.get('QTY-MEDIANO', 0),
-                    "transacciones_grandes": metrics.get('QTY-GRANDE', 0)
-                }
             }
         }
