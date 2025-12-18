@@ -144,7 +144,7 @@ class CoreBankingService:
         return None
 
     @staticmethod
-    def obtener_posicion_global(cod_cliente: int):
+    def obtener_posicion_global(cod_cliente: str):
         """
         Simula la transacción TRX001 (Posición Global).
         Recibe el COD_CLIENTE (obtenido en el login) para optimizar la consulta.
@@ -180,29 +180,24 @@ class CoreBankingService:
         # 2. Obtener Cuentas (CURSOR CUENTAS)
         cuentas_orm = Cuenta.query.filter_by(cod_cliente=cod_cliente).all()
         
-        # 3. Obtener Tarjetas (CURSOR TARJETAS)
-        # En la nueva estructura, las tarjetas están vinculadas a las cuentas.
-        # Iteramos las cuentas para encontrar las tarjetas asociadas.
-        lista_tarjetas = []
         lista_cuentas = []
-        
         for c in cuentas_orm:
             lista_cuentas.append({
                 "CTA-NUMERO": c.num_cuenta,
                 "CTA-MONEDA": c.moneda,
                 "CTA-SALDO": float(c.saldo_disponible)
             })
-            
-            if c.num_tarjeta:
-                # Si la cuenta tiene tarjeta asociada, la agregamos a la lista de tarjetas
-                # Buscamos la tarjeta para obtener detalles si es necesario, o usamos el ID directo
-                # En la simulación, asumimos que existe si está en la FK.
-                # Para ser estrictos con el modelo, podríamos hacer un join o query, 
-                # pero aquí basta con saber el número.
-                lista_tarjetas.append({
-                    "TRJ-NUMERO": c.num_tarjeta,
-                    "TRJ-CTA-LINK": c.num_cuenta
-                })
+
+        # 3. Obtener Tarjetas (CURSOR TARJETAS)
+        # En la nueva estructura, consultamos directamente CORE_TARJETAS por COD_CLIENTE
+        tarjetas_orm = Tarjeta.query.filter_by(cod_cliente=cod_cliente).all()
+        
+        lista_tarjetas = []
+        for t in tarjetas_orm:
+            lista_tarjetas.append({
+                "TRJ-NUMERO": t.num_tarjeta,
+                "TRJ-CTA-LINK": t.num_cuenta if t.num_cuenta else ""
+            })
 
         return {
             "COD-RETORNO": "00",
